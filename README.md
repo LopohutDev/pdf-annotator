@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PDF Annotator
+
+A web-based application for viewing and annotating PDF documents directly in the browser. Built with Next.js and TypeScript.
+
+## Features
+
+- **PDF Viewing**: Render and view PDF documents seamlessly.
+- **File Upload**: Easily upload PDF files from your local machine.
+- **Annotation Tools**: Add text and drawings to your documents.
+- **Layer Management**: Organize annotations with a simple layers panel.
+- **State Management**: Powered by Zustand for efficient and predictable state changes.
+
+## Tech Stack
+
+- [Next.js](https://nextjs.org/) - React Framework
+- [React](https://reactjs.org/) - UI Library
+- [TypeScript](https://www.typescriptlang.org/) - Typed JavaScript
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-First CSS Framework
+- [Zustand](https://github.com/pmndrs/zustand) - State Management
+- [pdf-lib](https://pdf-lib.js.org/) - PDF manipulation library
+- [React-PDF](https://github.com/wojtekmaj/react-pdf) - PDF rendering for React
 
 ## Getting Started
 
-First, run the development server:
+Follow these instructions to set up and run the project locally.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Prerequisites
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- [Node.js](https://nodejs.org/en/) (v20 or later)
+- [pnpm](https://pnpm.io/installation)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Installation & Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repository-url>
+    cd pdf-annotator
+    ```
 
-## Learn More
+2.  **Install dependencies:**
+    ```bash
+    pnpm install
+    ```
 
-To learn more about Next.js, take a look at the following resources:
+3.  **Run the development server:**
+    ```bash
+    pnpm run dev
+    ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+4.  Open your browser and navigate to [http://localhost:3000](http://localhost:3000) to see the application in action.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Available Scripts
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `pnpm run dev`: Starts the development server.
+- `pnpm run build`: Creates a production build.
+- `pnpm run start`: Starts the production server.
+- `pnpm run lint`: Lints the codebase using Next.js's built-in ESLint configuration.
