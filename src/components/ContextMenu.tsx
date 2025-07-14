@@ -31,7 +31,7 @@ export default function ContextMenu({
 
   return (
     <div
-      className="absolute bg-white border border-gray-300 rounded-md shadow-lg z-20"
+      className="absolute bg-white border border-gray-300 rounded-md shadow-lg z-30"
       style={{ top: y, left: x }}
     >
       <ul className="py-1">

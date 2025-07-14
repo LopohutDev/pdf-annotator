@@ -52,15 +52,17 @@ interface Store {
   historyIndex: number;
   undo: () => void;
   redo: () => void;
+  commit: () => void;
+  layersPanelVisible: boolean;
+  toggleLayersPanel: () => void;
 }
 
 const useStoreImplementation = create<Store>((set, get) => {
-  const addToHistory = (newAnnotations: Annotation[]) => {
-    const { history, historyIndex } = get();
+  const commit = () => {
+    const { history, historyIndex, annotations } = get();
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newAnnotations);
+    newHistory.push(annotations);
     set({
-      annotations: newAnnotations,
       history: newHistory,
       historyIndex: newHistory.length - 1,
     });
@@ -78,27 +80,34 @@ const useStoreImplementation = create<Store>((set, get) => {
     annotations: [],
     history: [[]],
     historyIndex: 0,
-    setAnnotations: (annotations) => addToHistory(annotations),
+    commit,
+    setAnnotations: (annotations) => {
+      set({ annotations });
+      commit();
+    },
     addAnnotation: (annotation) => {
       const { annotations } = get();
       const newAnnotations = [...annotations, annotation];
-      addToHistory(newAnnotations);
-      set({ selectedAnnotation: annotation.id });
+      set({ annotations: newAnnotations, selectedAnnotation: annotation.id });
+      commit();
     },
     updateAnnotation: (id, updates) => {
       const { annotations } = get();
       const newAnnotations = annotations.map((a) =>
         a.id === id ? { ...a, ...updates } : a
       );
-      addToHistory(newAnnotations);
+      set({ annotations: newAnnotations });
     },
     deleteAnnotation: (id) => {
       const { annotations } = get();
       const newAnnotations = annotations.filter((a) => a.id !== id);
-      addToHistory(newAnnotations);
-      set({ selectedAnnotation: null });
+      set({ annotations: newAnnotations, selectedAnnotation: null });
+      commit();
     },
-    clearAnnotations: () => addToHistory([]),
+    clearAnnotations: () => {
+      set({ annotations: [] });
+      commit();
+    },
     selectedAnnotation: null,
     selectAnnotation: (id) => set({ selectedAnnotation: id }),
     undo: () => {
@@ -123,6 +132,9 @@ const useStoreImplementation = create<Store>((set, get) => {
         });
       }
     },
+    layersPanelVisible: true,
+    toggleLayersPanel: () =>
+      set((state) => ({ layersPanelVisible: !state.layersPanelVisible })),
   };
 });
 

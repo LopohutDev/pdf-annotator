@@ -12,14 +12,15 @@ export default function AnnotationEditor({
   annotation,
   onClose,
 }: AnnotationEditorProps) {
-  const { updateAnnotation } = useStore();
+  const { updateAnnotation, commit } = useStore();
   const [text, setText] = useState(annotation.text || "");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = useCallback(() => {
     updateAnnotation(annotation.id, { text });
+    commit();
     onClose();
-  }, [annotation.id, text, updateAnnotation, onClose]);
+  }, [annotation.id, text, updateAnnotation, onClose, commit]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

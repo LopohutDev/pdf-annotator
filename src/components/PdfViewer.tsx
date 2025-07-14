@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useStore, Annotation } from "@/lib/store";
 import AnnotationEditor from "./AnnotationEditor";
 import ContextMenu from "./ContextMenu";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -27,6 +27,7 @@ export default function PdfViewer({ file }: PdfViewerProps) {
     selectAnnotation,
     undo,
     redo,
+    commit,
   } = useStore();
 
   const [pdfUrl, setPdfUrl] = useState("");
@@ -51,6 +52,8 @@ export default function PdfViewer({ file }: PdfViewerProps) {
     y: number;
   } | null>(null);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const docRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
@@ -59,12 +62,15 @@ export default function PdfViewer({ file }: PdfViewerProps) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const onPageRenderSuccess = (page: any) => {
-    setPageDimensions((prev) =>
-      new Map(prev).set(page.pageNumber, {
-        width: page.width,
-        height: page.height,
-      })
+    const pageElement = containerRef.current?.querySelector(
+      `.react-pdf__Page[data-page-number="${page.pageNumber}"]`
     );
+    if (pageElement) {
+      const { width, height } = pageElement.getBoundingClientRect();
+      setPageDimensions((prev) =>
+        new Map(prev).set(page.pageNumber, { width, height })
+      );
+    }
   };
 
   useEffect(() => {
@@ -85,6 +91,7 @@ export default function PdfViewer({ file }: PdfViewerProps) {
     return { pageNumber: numPages || 1, y: absoluteY - cumulativeHeight };
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const getAbsoluteY = (pageNumber: number, relativeY: number) => {
     let cumulativeHeight = 0;
     for (let i = 1; i < pageNumber; i++) {
@@ -96,10 +103,28 @@ export default function PdfViewer({ file }: PdfViewerProps) {
   const getCoords = (e: React.MouseEvent) => {
     const container = containerRef.current;
     if (!container) return { x: 0, y: 0, pageNumber: 1 };
-    const rect = container.getBoundingClientRect();
+
+    const pageElement = (e.target as HTMLElement).closest(".react-pdf__Page");
+    if (!pageElement) {
+      // Fallback for when the event target is not within a page (e.g., on the canvas)
+      const firstPageElement = container.querySelector(".react-pdf__Page");
+      const containerRect = container.getBoundingClientRect();
+      const offsetX = firstPageElement
+        ? firstPageElement.getBoundingClientRect().left - containerRect.left
+        : 0;
+      const x = e.clientX - containerRect.left - offsetX;
+      const y = e.clientY - containerRect.top + container.scrollTop;
+      const { pageNumber } = getPageAndRelativeCoords(y);
+      return { x, y, pageNumber };
+    }
+
+    const rect = pageElement.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top + container.scrollTop;
-    const { pageNumber } = getPageAndRelativeCoords(y);
+    const y = e.clientY - rect.top + (pageElement as HTMLElement).scrollTop;
+    const absoluteY = e.clientY - containerRect.top + container.scrollTop;
+    const { pageNumber } = getPageAndRelativeCoords(absoluteY);
+
     return { x, y, pageNumber };
   };
 
@@ -191,7 +216,6 @@ export default function PdfViewer({ file }: PdfViewerProps) {
           a.id === state.selectedAnnotation && a.type === "polygon" && !a.closed
       );
       if (currentAnnotation) {
-        // Check if clicking near the first point to close the polygon
         const firstPoint = currentAnnotation.points?.[0];
         if (firstPoint) {
           const distance = Math.sqrt(
@@ -199,8 +223,8 @@ export default function PdfViewer({ file }: PdfViewerProps) {
               Math.pow(relativeY - firstPoint.y, 2)
           );
           if (distance < 10) {
-            // Close the polygon
             updateAnnotation(currentAnnotation.id, { closed: true });
+            commit();
             selectAnnotation(null);
             return;
           }
@@ -289,6 +313,9 @@ export default function PdfViewer({ file }: PdfViewerProps) {
   };
 
   const handleMouseUp = () => {
+    if (isDrawing || isDragging) {
+      commit();
+    }
     setIsDrawing(false);
     setIsDragging(false);
     const state = useStore.getState();
@@ -313,6 +340,7 @@ export default function PdfViewer({ file }: PdfViewerProps) {
       );
       if (currentAnnotation) {
         updateAnnotation(currentAnnotation.id, { closed: true });
+        commit();
         selectAnnotation(null);
       }
     }
@@ -338,6 +366,12 @@ export default function PdfViewer({ file }: PdfViewerProps) {
     const container = containerRef.current;
     if (!ctx || !canvas || !container) return;
 
+    const firstPageElement = container.querySelector(".react-pdf__Page");
+    const containerRect = container.getBoundingClientRect();
+    const offsetX = firstPageElement
+      ? firstPageElement.getBoundingClientRect().left - containerRect.left
+      : 0;
+
     const totalHeight = Array.from(pageDimensions.values()).reduce(
       (sum, dim) => sum + dim.height,
       0
@@ -359,6 +393,11 @@ export default function PdfViewer({ file }: PdfViewerProps) {
       ctx.lineWidth = ann.strokeWidth || (isSelected ? 3 : 2);
       ctx.fillStyle = ann.color ? `${ann.color}33` : "rgba(0, 0, 0, 0.2)";
 
+      const annOffsetX =
+        pageDimensions.get(ann.page)?.width === container.clientWidth
+          ? 0
+          : offsetX;
+
       if (
         (ann.type === "pen" || ann.type === "highlighter") &&
         ann.points &&
@@ -370,13 +409,13 @@ export default function PdfViewer({ file }: PdfViewerProps) {
           ann.points[0].page,
           ann.points[0].y
         );
-        ctx.moveTo(ann.points[0].x, firstPointAbsoluteY);
+        ctx.moveTo(ann.points[0].x + annOffsetX, firstPointAbsoluteY);
         for (let i = 1; i < ann.points.length; i++) {
           const pointAbsoluteY = getAbsoluteY(
             ann.points[i].page,
             ann.points[i].y
           );
-          ctx.lineTo(ann.points[i].x, pointAbsoluteY);
+          ctx.lineTo(ann.points[i].x + annOffsetX, pointAbsoluteY);
         }
         ctx.stroke();
         ctx.globalAlpha = 1;
@@ -387,15 +426,15 @@ export default function PdfViewer({ file }: PdfViewerProps) {
         const p2AbsY = getAbsoluteY(p2.page, p2.y);
         const angle = Math.atan2(p2AbsY - p1AbsY, p2.x - p1.x);
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1AbsY);
-        ctx.lineTo(p2.x, p2AbsY);
+        ctx.moveTo(p1.x + annOffsetX, p1AbsY);
+        ctx.lineTo(p2.x + annOffsetX, p2AbsY);
         ctx.lineTo(
-          p2.x - 10 * Math.cos(angle - Math.PI / 6),
+          p2.x + annOffsetX - 10 * Math.cos(angle - Math.PI / 6),
           p2AbsY - 10 * Math.sin(angle - Math.PI / 6)
         );
-        ctx.moveTo(p2.x, p2AbsY);
+        ctx.moveTo(p2.x + annOffsetX, p2AbsY);
         ctx.lineTo(
-          p2.x - 10 * Math.cos(angle + Math.PI / 6),
+          p2.x + annOffsetX - 10 * Math.cos(angle + Math.PI / 6),
           p2AbsY - 10 * Math.sin(angle + Math.PI / 6)
         );
         ctx.stroke();
@@ -409,55 +448,57 @@ export default function PdfViewer({ file }: PdfViewerProps) {
           ann.points[0].page,
           ann.points[0].y
         );
-        ctx.moveTo(ann.points[0].x, firstPointAbsoluteY);
+        ctx.moveTo(ann.points[0].x + annOffsetX, firstPointAbsoluteY);
         for (let i = 1; i < ann.points.length; i++) {
           const pointAbsoluteY = getAbsoluteY(
             ann.points[i].page,
             ann.points[i].y
           );
-          ctx.lineTo(ann.points[i].x, pointAbsoluteY);
+          ctx.lineTo(ann.points[i].x + annOffsetX, pointAbsoluteY);
         }
         if (ann.closed) {
           ctx.closePath();
-          ctx.fill();
         } else if (isSelected && currentMousePosition) {
-          const lastPoint = ann.points[ann.points.length - 1];
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const lastPointAbsoluteY = getAbsoluteY(lastPoint.page, lastPoint.y);
-          ctx.lineTo(currentMousePosition.x, currentMousePosition.y);
+          ctx.lineTo(
+            currentMousePosition.x + annOffsetX,
+            currentMousePosition.y
+          );
         }
         ctx.stroke();
       } else if (
         ann.type === "rectangle" &&
-        ann.x &&
-        ann.y &&
-        ann.width &&
-        ann.height
+        ann.x != null &&
+        ann.y != null &&
+        ann.width != null &&
+        ann.height != null
       ) {
         const absoluteY = getAbsoluteY(ann.page, ann.y);
-        ctx.strokeRect(ann.x, absoluteY, ann.width, ann.height);
-        ctx.fillRect(ann.x, absoluteY, ann.width, ann.height);
-      } else if (ann.type === "circle" && ann.x && ann.y && ann.radius) {
+        ctx.strokeRect(ann.x + annOffsetX, absoluteY, ann.width, ann.height);
+      } else if (
+        ann.type === "circle" &&
+        ann.x != null &&
+        ann.y != null &&
+        ann.radius != null
+      ) {
         const absoluteY = getAbsoluteY(ann.page, ann.y);
         ctx.beginPath();
-        ctx.arc(ann.x, absoluteY, ann.radius, 0, 2 * Math.PI);
+        ctx.arc(ann.x + annOffsetX, absoluteY, ann.radius, 0, 2 * Math.PI);
         ctx.stroke();
-        ctx.fill();
-      } else if (ann.type === "text" && ann.x && ann.y) {
+      } else if (ann.type === "text" && ann.x != null && ann.y != null) {
         const absoluteY = getAbsoluteY(ann.page, ann.y);
         ctx.font = `${ann.fontSize || 16}px Arial`;
         ctx.fillStyle = isSelected ? "blue" : ann.color || "black";
-        ctx.fillText(ann.text || "", ann.x, absoluteY);
+        ctx.fillText(ann.text || "", ann.x + annOffsetX, absoluteY);
       }
       ctx.restore();
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     annotations,
     selectedAnnotation,
     editingAnnotation,
     pageDimensions,
     currentMousePosition,
+    getAbsoluteY,
   ]);
 
   useEffect(() => {
@@ -465,29 +506,181 @@ export default function PdfViewer({ file }: PdfViewerProps) {
   }, [draw, annotations]);
 
   const save = useCallback(async () => {
-    // Save logic remains largely the same as it operates on annotations array directly
     setIsSaving(true);
-    const pdfBytes = await file.arrayBuffer();
-    const pdfDoc = await PDFDocument.load(pdfBytes);
-    const pages = pdfDoc.getPages();
+    try {
+      const pdfBytes = await file.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const pdfPages = pdfDoc.getPages();
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-    for (const ann of annotations) {
-      const page = pages[ann.page - 1];
-      if (!page) continue;
-      // ... (rest of save logic is complex but doesn't need major changes for this refactor)
+      const colorToRgb = (color: string) => {
+        const r = parseInt(color.slice(1, 3), 16) / 255;
+        const g = parseInt(color.slice(3, 5), 16) / 255;
+        const b = parseInt(color.slice(5, 7), 16) / 255;
+        return rgb(r, g, b);
+      };
+
+      for (const ann of annotations) {
+        const page = pdfPages[ann.page - 1];
+        const renderedPageDims = pageDimensions.get(ann.page);
+
+        if (!page || !renderedPageDims) continue;
+
+        const { width: actualWidth, height: actualHeight } = page.getSize();
+        const { width: renderedWidth } = renderedPageDims;
+        const scale = actualWidth / renderedWidth;
+
+        const annColor = ann.color ? colorToRgb(ann.color) : rgb(0, 0, 0);
+
+        if (
+          (ann.type === "pen" || ann.type === "highlighter") &&
+          ann.points &&
+          ann.points.length > 1
+        ) {
+          for (let i = 0; i < ann.points.length - 1; i++) {
+            const p1 = ann.points[i];
+            const p2 = ann.points[i + 1];
+            page.drawLine({
+              start: { x: p1.x * scale, y: actualHeight - p1.y * scale },
+              end: { x: p2.x * scale, y: actualHeight - p2.y * scale },
+              thickness: (ann.strokeWidth || 2) * scale,
+              color: annColor,
+              opacity: ann.type === "highlighter" ? 0.5 : 1,
+            });
+          }
+        } else if (
+          ann.type === "rectangle" &&
+          ann.x != null &&
+          ann.y != null &&
+          ann.width != null &&
+          ann.height != null
+        ) {
+          const rectX = (ann.width > 0 ? ann.x : ann.x + ann.width) * scale;
+          const rectY = (ann.height > 0 ? ann.y : ann.y + ann.height) * scale;
+          const rectWidth = Math.abs(ann.width) * scale;
+          const rectHeight = Math.abs(ann.height) * scale;
+
+          page.drawRectangle({
+            x: rectX,
+            y: actualHeight - rectY - rectHeight,
+            width: rectWidth,
+            height: rectHeight,
+            borderColor: annColor,
+            borderWidth: (ann.strokeWidth || 2) * scale,
+          });
+        } else if (
+          ann.type === "circle" &&
+          ann.x != null &&
+          ann.y != null &&
+          ann.radius != null
+        ) {
+          page.drawCircle({
+            x: ann.x * scale,
+            y: actualHeight - ann.y * scale,
+            size: ann.radius * scale,
+            borderColor: annColor,
+            borderWidth: (ann.strokeWidth || 2) * scale,
+          });
+        } else if (
+          ann.type === "polygon" &&
+          ann.points &&
+          ann.points.length > 0 &&
+          ann.closed
+        ) {
+          const points = ann.points.map((p) => ({
+            x: p.x * scale,
+            y: actualHeight - p.y * scale,
+          }));
+
+          for (let i = 0; i < points.length; i++) {
+            const start = points[i];
+            const end = points[(i + 1) % points.length]; // Wraps around to the first point
+            page.drawLine({
+              start,
+              end,
+              thickness: (ann.strokeWidth || 2) * scale,
+              color: annColor,
+            });
+          }
+        } else if (
+          ann.type === "text" &&
+          ann.x != null &&
+          ann.y != null &&
+          ann.text
+        ) {
+          page.drawText(ann.text, {
+            x: ann.x * scale,
+            y: actualHeight - ann.y * scale,
+            size: (ann.fontSize || 16) * scale,
+            font,
+            color: annColor,
+          });
+        } else if (
+          ann.type === "arrow" &&
+          ann.points &&
+          ann.points.length > 1
+        ) {
+          const p1 = {
+            x: ann.points[0].x * scale,
+            y: actualHeight - ann.points[0].y * scale,
+          };
+          const p2 = {
+            x: ann.points[1].x * scale,
+            y: actualHeight - ann.points[1].y * scale,
+          };
+          const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+
+          const arrowheadLength = 10 * scale;
+          const arrowheadAngle = Math.PI / 6;
+
+          const arrowheadP1 = {
+            x: p2.x - arrowheadLength * Math.cos(angle - arrowheadAngle),
+            y: p2.y - arrowheadLength * Math.sin(angle - arrowheadAngle),
+          };
+          const arrowheadP2 = {
+            x: p2.x - arrowheadLength * Math.cos(angle + arrowheadAngle),
+            y: p2.y - arrowheadLength * Math.sin(angle + arrowheadAngle),
+          };
+
+          page.drawLine({
+            start: p1,
+            end: p2,
+            thickness: (ann.strokeWidth || 2) * scale,
+            color: annColor,
+          });
+          page.drawLine({
+            start: p2,
+            end: arrowheadP1,
+            thickness: (ann.strokeWidth || 2) * scale,
+            color: annColor,
+          });
+          page.drawLine({
+            start: p2,
+            end: arrowheadP2,
+            thickness: (ann.strokeWidth || 2) * scale,
+            color: annColor,
+          });
+        }
+      }
+
+      const newPdfBytes = await pdfDoc.save();
+      const blob = new Blob([newPdfBytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `annotated-${file.name}`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      alert("PDF saved successfully!");
+    } catch (error) {
+      console.error("Failed to save PDF:", error);
+      alert("Failed to save PDF. See console for details.");
+    } finally {
+      setIsSaving(false);
     }
-
-    const newPdfBytes = await pdfDoc.save();
-    const blob = new Blob([newPdfBytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `annotated-${file.name}`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setIsSaving(false);
-    alert("PDF saved successfully!");
-  }, [annotations, file]);
+  }, [annotations, file, pageDimensions]);
 
   useEffect(() => {
     const handleSave = () => save();
@@ -515,6 +708,7 @@ export default function PdfViewer({ file }: PdfViewerProps) {
         );
         if (currentAnnotation) {
           updateAnnotation(currentAnnotation.id, { closed: true });
+          commit();
           selectAnnotation(null);
         }
       }
@@ -522,7 +716,14 @@ export default function PdfViewer({ file }: PdfViewerProps) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAnnotation, deleteAnnotation, undo, redo, updateAnnotation]);
+  }, [
+    selectedAnnotation,
+    deleteAnnotation,
+    undo,
+    redo,
+    updateAnnotation,
+    commit,
+  ]);
 
   const finishPolygon = () => {
     const state = useStore.getState();
@@ -532,6 +733,7 @@ export default function PdfViewer({ file }: PdfViewerProps) {
     );
     if (currentAnnotation) {
       updateAnnotation(currentAnnotation.id, { closed: true });
+      commit();
       selectAnnotation(null);
     }
   };
@@ -557,17 +759,18 @@ export default function PdfViewer({ file }: PdfViewerProps) {
       )}
       <div ref={containerRef} className="relative w-full">
         {isSaving && (
-          <div className="absolute inset-0 bg-gray-500 bg-opacity-50 flex items-center justify-center z-30">
+          <div className="absolute inset-0 bg-gray-500 bg-opacity-50 flex items-center justify-center z-50">
             <Loader2 className="animate-spin h-12 w-12 text-white" />
           </div>
         )}
         <Document
+          ref={docRef}
           file={pdfUrl}
           onLoadSuccess={onDocumentLoadSuccess}
           loading={<Loader2 className="animate-spin" />}
           className="flex flex-col items-center"
         >
-          {Array.from(new Array(numPages), (el, index) => (
+          {Array.from(new Array(numPages || 0), (el, index) => (
             <div
               key={`page_container_${index + 1}`}
               className="mb-4 border-b-2 border-gray-300"
@@ -582,7 +785,7 @@ export default function PdfViewer({ file }: PdfViewerProps) {
         </Document>
         <canvas
           ref={canvasRef}
-          className="absolute top-0 left-0 z-10"
+          className="absolute top-0 left-0 z-10 pointer-events-none"
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -590,22 +793,35 @@ export default function PdfViewer({ file }: PdfViewerProps) {
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
         />
-        {editingAnnotation && (
-          <AnnotationEditor
-            annotation={editingAnnotation}
-            onClose={() => setEditingAnnotation(null)}
-          />
-        )}
-        {contextMenu && (
-          <ContextMenu
-            {...contextMenu}
-            onClose={() => setContextMenu(null)}
-            onEdit={() => {
-              setEditingAnnotation(contextMenu.annotation);
-              setContextMenu(null);
-            }}
-          />
-        )}
+        <div
+          className="absolute top-0 left-0 w-full h-full z-20"
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={() => setCurrentMousePosition(null)}
+          onDoubleClick={handleDoubleClick}
+          onContextMenu={handleContextMenu}
+        >
+          {editingAnnotation && (
+            <AnnotationEditor
+              annotation={editingAnnotation}
+              onClose={() => {
+                setEditingAnnotation(null);
+                commit();
+              }}
+            />
+          )}
+          {contextMenu && (
+            <ContextMenu
+              {...contextMenu}
+              onClose={() => setContextMenu(null)}
+              onEdit={() => {
+                setEditingAnnotation(contextMenu.annotation);
+                setContextMenu(null);
+              }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
